@@ -1,0 +1,12 @@
+../Core/Src/filter.c:58:14:Calculate_LPF_Alpha	24	static
+../Core/Src/filter.c:66:14:Calculate_HPF_Alpha	24	static
+../Core/Src/filter.c:76:6:Filter_Init	32	static
+../Core/Src/filter.c:107:6:Filter_Set_Params	24	static
+../Core/Src/filter.c:121:13:Apply_RingModulator	32	static
+../Core/Src/filter.c:132:13:Apply_LPF	16	static
+../Core/Src/filter.c:139:13:Apply_HPF	32	static
+../Core/Src/filter.c:150:13:Apply_AutoWah	72	static
+../Core/Src/filter.c:229:13:Apply_Bitcrusher	32	static
+../Core/Src/filter.c:270:13:Apply_Delay	32	static
+../Core/Src/filter.c:296:13:Apply_MasterVolume_And_Clip	16	static
+../Core/Src/filter.c:305:6:Filter_Apply	32	static
