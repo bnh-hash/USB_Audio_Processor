@@ -1,5 +1,2 @@
-../Core/Src/app_main.c:34:6:Update_LEDs	5
-../Core/Src/app_main.c:45:6:Set_Audio_Mode	5
-../Core/Src/app_main.c:81:6:App_Init	1
-../Core/Src/app_main.c:98:6:Check_Filter_Button	5
-../Core/Src/app_main.c:112:6:App_Loop	1
+../Core/Src/app_main.c:22:6:App_Init	1
+../Core/Src/app_main.c:63:6:App_Loop	1
