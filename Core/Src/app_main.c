@@ -8,7 +8,6 @@
    HAL HANDLE
    ════════════════════════════════════════════ */
 extern ADC_HandleTypeDef hadc1;
-// CubeMX tarafından main.c'de tanımlanıyor, burada sadece kullanıyoruz.
 
 /* ════════════════════════════════════════════
    GLOBAL DEĞİŞKENLER
@@ -16,89 +15,162 @@ extern ADC_HandleTypeDef hadc1;
 volatile float      carrier_phase   = 0.0f;
 filter_params_t     app_filter_params;
 uint16_t            pot_values[POT_COUNT];
-// pot_values: 5 elemanlı dizi, her biri 0–4095 arası ham ADC değeri.
-// DMA yerine polling kullanıyoruz → hadc1 ile sırayla her kanalı okuyoruz.
+
+/* Pot smoothing (8-sample exponential moving average, jitter önleme) */
+static uint16_t smooth_pot[POT_COUNT];
+static uint8_t  first_read = 1;
 
 /* ════════════════════════════════════════════
    POT OKUMA FONKSİYONLARI
    ════════════════════════════════════════════ */
 
+/**
+ * @brief  Tek bir ADC kanalını polling ile okur.
+ *         Her çağrıda kanal yeniden konfigüre edilir,
+ *         tek dönüşüm yapılır ve sonuç döndürülür.
+ *
+ *         ÖNEMLİ: MX_ADC1_Init'te ScanConvMode ve
+ *         ContinuousConvMode DISABLE olmalıdır.
+ */
 static uint16_t Pot_ReadChannel(uint32_t channel)
 {
     ADC_ChannelConfTypeDef sConfig = {0};
 
-    sConfig.Channel     = channel;
-    sConfig.Rank        = 1;
+    sConfig.Channel      = channel;
+    sConfig.Rank         = 1;
     sConfig.SamplingTime = ADC_SAMPLETIME_84CYCLES;
-    // 84 cycle örnekleme: pot'un çıkış empedansı yüksek olabilir,
+    // 84 cycle: pot çıkış empedansı yüksek olabilir,
     // uzun örnekleme süresi daha kararlı okuma sağlar.
 
     HAL_ADC_ConfigChannel(&hadc1, &sConfig);
-    // Kanalı geçici olarak rank 1'e al ve dönüştür.
-    // Her pot için aynı ADC1'i sırayla farklı kanalla kullanıyoruz.
 
     HAL_ADC_Start(&hadc1);
-    // Tek dönüşüm başlat (ContinuousConvMode=DISABLE olduğu için bir kere çevirir).
-
     HAL_ADC_PollForConversion(&hadc1, 10);
-    // En fazla 10ms bekle. Normal şartlarda mikrosaniyeler içinde biter.
 
     uint16_t val = (uint16_t)HAL_ADC_GetValue(&hadc1);
-    // 12-bit sonucu oku: 0–4095 arası.
 
     HAL_ADC_Stop(&hadc1);
-    // Bir sonraki kanal konfigürasyonuna geçmeden önce ADC'yi durdur.
 
     return val;
 }
 
+/**
+ * @brief  6 pot kanalını sırayla okur ve jitter filtresi uygular.
+ *         smooth_pot[] dizisi üzerinden 8-sample EMA ile yumuşatma.
+ */
 static void Pot_ReadAll(void)
 {
     for (uint8_t i = 0; i < POT_COUNT; i++) {
-        pot_values[i] = Pot_ReadChannel(POT_CHANNELS[i]);
+        uint16_t raw = Pot_ReadChannel(POT_CHANNELS[i]);
+
+        if (first_read) {
+            smooth_pot[i] = raw;  // İlk okumada hemen kabul et
+        } else {
+            // 8-sample exponential moving average
+            // (7/8 eski değer + 1/8 yeni değer)
+            smooth_pot[i] = (uint16_t)(((uint32_t)smooth_pot[i] * 7u + (uint32_t)raw) / 8u);
+        }
+        pot_values[i] = smooth_pot[i];
     }
-    // 5 kanalı sırayla oku ve pot_values dizisine yaz.
-    // Toplam süre ~5 × (örnekleme + dönüşüm) ≈ birkaç mikrosaniye.
-    // App_Loop'ta 20ms'de bir çağrılıyor, yükü ihmal edilebilir.
+    first_read = 0;
 }
 
+/**
+ * @brief  Ham 0–4095 değerini istenen [min, max] aralığına doğrusal taşır.
+ */
 static float Pot_Map(uint8_t idx, float min_val, float max_val)
 {
     return min_val + ((float)pot_values[idx] / 4095.0f) * (max_val - min_val);
-    // Ham 0–4095 değerini istenen aralığa doğrusal olarak taşır.
-    // idx: pot_values dizisindeki indeks.
 }
 
+/* ════════════════════════════════════════════
+   POT → PARAMETRE HARİTALAMA
+   ════════════════════════════════════════════ */
+
+/**
+ * @brief  6 pot değerini filtre parametrelerine dönüştürür.
+ *
+ *   POT1 (idx 0) → Master Volume     0.0 – 1.5
+ *   POT2 (idx 1) → LPF Cutoff        200 Hz – 20 kHz  (log)
+ *   POT3 (idx 2) → HPF Cutoff        20 Hz – 5 kHz    (log)
+ *   POT4 (idx 3) → Delay Feedback    0.0 – 0.85
+ *   POT5 (idx 4) → Ring Mod Frekans  20 Hz – 1 kHz    (log)
+ *   POT6 (idx 5) → Wah Hassasiyet    0.1 – 1.0
+ */
 static void Pot_ApplyToParams(void)
 {
-    /* POT0 → Ring Mod Carrier Frekansı (20 – 1000 Hz, logaritmik) */
-    float log_freq = Pot_Map(0, 0.0f, 2.699f);
-    // log ölçek: 10^0=1 … 10^2.699≈500 → *2 ile 2–1000 Hz arası.
-    // Logaritmik tercih: kulağın frekansı logaritmik algılaması ile örtüşür,
-    // potun tüm dönüş aralığı boyunca eşit "hassasiyet hissi" verir.
-    app_filter_params.ring_mod_freq = powf(10.0f, log_freq) * 2.0f;
+    /* ── POT1 → Master Volume ─────────────────────────── */
+    app_filter_params.master_volume = Pot_Map(0, 0.0f, 1.5f);
 
-    /* POT1 → Ring Mod Yoğunluğu (0.0 – 1.0) */
-    app_filter_params.ring_mod_intensity = Pot_Map(1, 0.0f, 1.0f);
-    // 0.0: ring mod etkisiz, 1.0: tam ring modulation.
+    /* ── POT2 → LPF Cutoff ───────────────────────────── */
+    // Pot tam saat yönünde (max) → cutoff çok yüksek →
+    //   filtre şeffaf → LPF kapalı
+    // Pot saat yönü tersine çevrildikçe cutoff düşer →
+    //   tiz sesler kesilir
+    if (pot_values[1] > 3950) {
+        /* Pot neredeyse sonuna gelmiş → LPF devre dışı */
+        app_filter_params.lpf_enable = 0;
+    } else {
+        app_filter_params.lpf_enable = 1;
+        /* 0 – 3950 aralığını 0.0 – 1.0 normalize et */
+        float norm = (float)pot_values[1] / 3950.0f;
+        /* Logaritmik ölçek: 200 Hz – 20 000 Hz
+         * 200 * 100^0 = 200 Hz  (pot min)
+         * 200 * 100^1 = 20 000 Hz (pot ~max)            */
+        app_filter_params.lpf_cutoff_freq = 200.0f * powf(100.0f, norm);
+    }
 
-    /* POT2 → Wah Hassasiyeti (0.1 – 1.0) */
-    app_filter_params.wah_sensitivity = Pot_Map(2, 0.1f, 1.0f);
-    // 0.1 alt sınır: sıfırda wah tamamen kapanır, bu yüzden küçük bir offset bıraktık.
+    /* ── POT3 → HPF Cutoff ───────────────────────────── */
+    // Pot minimum → cutoff çok düşük → filtre şeffaf → HPF kapalı
+    // Pot yukarı çevrildikçe cutoff yükselir → bas kesilir
+    if (pot_values[2] < 100) {
+        /* Pot sıfıra yakın → HPF devre dışı */
+        app_filter_params.hpf_enable = 0;
+    } else {
+        app_filter_params.hpf_enable = 1;
+        float norm = (float)(pot_values[2] - 100) / 3995.0f;
+        /* Logaritmik ölçek: 20 Hz – 5 000 Hz
+         * 20 * 250^0 = 20 Hz   (pot min bölgesi)
+         * 20 * 250^1 = 5000 Hz (pot max)                */
+        app_filter_params.hpf_cutoff_freq = 20.0f * powf(250.0f, norm);
+    }
 
-    /* POT3 → Delay Feedback (0.0 – 0.9) */
-    app_filter_params.delay_feedback = Pot_Map(3, 0.0f, 0.9f);
-    // 1.0'a izin verme: feedback=1.0 sonsuz döngüye ve klipse neden olur.
-    // 0.9 pratik maksimum, yeterince uzun echo sağlar.
+    /* ── POT4 → Delay Feedback ────────────────────────── */
+    {
+        float fb = Pot_Map(3, 0.0f, 0.85f);
+        if (fb < 0.02f) {
+            /* Pot sıfırda → delay kapalı */
+            app_filter_params.delay_enable   = 0;
+            app_filter_params.delay_feedback = 0.0f;
+        } else {
+            app_filter_params.delay_enable   = 1;
+            app_filter_params.delay_feedback = fb;
+        }
+    }
 
-    /* POT4 → Master Volume (0.0 – 1.5) */
-    app_filter_params.master_volume = Pot_Map(4, 0.0f, 1.5f);
-    // 1.0 üstü hafif amplifikasyon imkanı tanır.
-    // Çok yüksek yapma: DAC/amplifikatör klipse girer.
+    /* ── POT5 → Ring Mod Frekans ──────────────────────── */
+    if (pot_values[4] < 100) {
+        /* Pot sıfırda → ring mod kapalı */
+        app_filter_params.ring_mod_enable = 0;
+    } else {
+        app_filter_params.ring_mod_enable = 1;
+        /* Logaritmik: 20 Hz – 1000 Hz
+         * 10^(0) * 2 = 2 Hz  min  →  10^(2.699)*2 ≈ 1000 Hz max */
+        float log_freq = Pot_Map(4, 0.0f, 2.699f);
+        app_filter_params.ring_mod_freq = powf(10.0f, log_freq) * 2.0f;
+    }
 
+    /* ── POT6 → Wah Hassasiyet ────────────────────────── */
+    if (pot_values[5] < 100) {
+        /* Pot sıfırda → wah kapalı */
+        app_filter_params.wah_enable = 0;
+    } else {
+        app_filter_params.wah_enable = 1;
+        app_filter_params.wah_sensitivity = Pot_Map(5, 0.1f, 1.0f);
+    }
+
+    /* Güncellenmiş parametreleri DSP modülüne ilet */
     Filter_Set_Params(&app_filter_params);
-    // Güncellenmiş parametreleri filtre modülüne ilet.
-    // Bu çağrı App_Loop'tan geliyor, DMA kesmesi sırasında değil.
 }
 
 /* ════════════════════════════════════════════
@@ -106,35 +178,37 @@ static void Pot_ApplyToParams(void)
    ════════════════════════════════════════════ */
 void App_Init(void)
 {
-    Filter_Init(&app_filter_params);
+    /* ─── Başlangıç Parametre Değerleri ─── */
+    /* Pot ile kontrol EDİLMEYEN parametrelerin sabit değerleri: */
+    app_filter_params.ring_mod_intensity = 0.7f;   // Ring Mod yoğunluğu (sabit)
+    app_filter_params.wah_mix            = 0.8f;   // Wah kuru/ıslak oranı (sabit)
+    app_filter_params.delay_mix          = 0.4f;   // Delay karışım oranı (sabit)
+    app_filter_params.bitcrush_amount    = 0.3f;   // Bitcrusher miktarı (sabit)
 
-    AudioStream_Init();
-    AudioStream_Start();
-
-    /* Başlangıç parametre değerleri */
-    app_filter_params.ring_mod_enable    = 1;
+    /* Tüm efektler başlangıçta kapalı – potlar açacak */
+    app_filter_params.ring_mod_enable    = 0;
     app_filter_params.wah_enable         = 0;
     app_filter_params.lpf_enable         = 0;
     app_filter_params.hpf_enable         = 0;
     app_filter_params.bitcrush_enable    = 0;
     app_filter_params.delay_enable       = 0;
 
-    app_filter_params.delay_feedback     = 0.6f;
-    app_filter_params.delay_mix          = 0.4f;
+    /* Güvenli başlangıç değerleri */
+    app_filter_params.master_volume      = 1.0f;
+    app_filter_params.lpf_cutoff_freq    = 20000.0f;
+    app_filter_params.hpf_cutoff_freq    = 20.0f;
     app_filter_params.ring_mod_freq      = 300.0f;
-    app_filter_params.ring_mod_intensity = 0.4f;
-    app_filter_params.wah_sensitivity    = 0.9f;
-    app_filter_params.wah_mix            = 0.8f;
-    app_filter_params.bitcrush_amount    = 0.3f;
-    app_filter_params.master_volume      = 1.1f;
+    app_filter_params.wah_sensitivity    = 0.5f;
+    app_filter_params.delay_feedback     = 0.0f;
 
-    Filter_Set_Params(&app_filter_params);
+    /* Filtre motoru ve audio stream başlat */
+    Filter_Init(&app_filter_params);
+    AudioStream_Init();
+    AudioStream_Start();
 
-    /* İlk pot okuma — başlangıçta pot değerleri geçerli olsun */
+    /* İlk pot okuma — gerçek pot pozisyonları hemen yansısın */
     Pot_ReadAll();
     Pot_ApplyToParams();
-    // Başlangıçta bir kere oku ki pot_values[i] = 0 ile başlamasın,
-    // gerçek pot pozisyonları hemen yansısın.
 }
 
 /* ════════════════════════════════════════════
@@ -145,15 +219,14 @@ void App_Loop(void)
     static uint32_t last_pot_tick = 0;
 
     if ((HAL_GetTick() - last_pot_tick) >= POT_UPDATE_MS) {
+        last_pot_tick = HAL_GetTick();
+
         Pot_ReadAll();
-        // 5 pot kanalını sırayla ADC1 ile polling yöntemiyle oku.
+        // 6 pot kanalını sırayla ADC1 ile polling yöntemiyle oku
+        // + jitter filtresi uygula.
 
         Pot_ApplyToParams();
-        // Okunan değerleri filtre parametrelerine map'le ve uygula.
-
-        last_pot_tick = HAL_GetTick();
-        // Bir sonraki güncelleme için zaman damgasını güncelle.
+        // Okunan değerleri filtre parametrelerine map'le
+        // ve DSP modülüne ilet.
     }
-    // HAL_Delay(10) kaldırıldı: non-blocking yapı daha sağlıklı.
-    // Gecikme ihtiyacı varsa DMA kesmesi zaten zamanlamayı yönetiyor.
 }

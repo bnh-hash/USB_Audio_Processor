@@ -1,69 +1,35 @@
-/* USER CODE BEGIN Header */
-/**
-  ******************************************************************************
-  * @file           : main.h
-  * @brief          : Header for main.c file.
-  *                   This file contains the common defines of the application.
-  ******************************************************************************
-  * @attention
-  *
-  * Copyright (c) 2026 STMicroelectronics.
-  * All rights reserved.
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
-  *
-  ******************************************************************************
-  */
-/* USER CODE END Header */
+#ifndef APP_MAIN_H
+#define APP_MAIN_H
 
-/* Define to prevent recursive inclusion -------------------------------------*/
-#ifndef __MAIN_H
-#define __MAIN_H
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-/* Includes ------------------------------------------------------------------*/
 #include "stm32f4xx_hal.h"
+#include <stdint.h>
 
-/* Private includes ----------------------------------------------------------*/
-/* USER CODE BEGIN Includes */
+/* ════════════════════════════════════════════
+   POT KONFİGÜRASYONU  (6 Potansiyometre)
+   ════════════════════════════════════════════ */
+#define POT_COUNT       6
+#define POT_UPDATE_MS   20    // 20 ms → 50 Hz güncelleme (pürüzsüz kontrol)
 
-/* USER CODE END Includes */
+/* Pin → ADC Kanal eşlemesi
+ *   POT1 → PA6  → ADC1_IN6  → Master Volume
+ *   POT2 → PA7  → ADC1_IN7  → LPF Cutoff
+ *   POT3 → PC4  → ADC1_IN14 → HPF Cutoff
+ *   POT4 → PC5  → ADC1_IN15 → Delay Feedback
+ *   POT5 → PB0  → ADC1_IN8  → Ring Mod Frekans
+ *   POT6 → PB1  → ADC1_IN9  → Wah Hassasiyet
+ */
+static const uint32_t POT_CHANNELS[POT_COUNT] = {
+    ADC_CHANNEL_6,    // POT1 → PA6  → Master Volume
+    ADC_CHANNEL_7,    // POT2 → PA7  → LPF Cutoff
+    ADC_CHANNEL_14,   // POT3 → PC4  → HPF Cutoff
+    ADC_CHANNEL_15,   // POT4 → PC5  → Delay Feedback
+    ADC_CHANNEL_8,    // POT5 → PB0  → Ring Mod Frekans
+    ADC_CHANNEL_9,    // POT6 → PB1  → Wah Hassasiyet
+};
 
-/* Exported types ------------------------------------------------------------*/
-/* USER CODE BEGIN ET */
+extern uint16_t pot_values[POT_COUNT];
 
-/* USER CODE END ET */
+void App_Init(void);
+void App_Loop(void);
 
-/* Exported constants --------------------------------------------------------*/
-/* USER CODE BEGIN EC */
-
-/* USER CODE END EC */
-
-/* Exported macro ------------------------------------------------------------*/
-/* USER CODE BEGIN EM */
-
-/* USER CODE END EM */
-
-/* Exported functions prototypes ---------------------------------------------*/
-void Error_Handler(void);
-
-/* USER CODE BEGIN EFP */
-
-/* USER CODE END EFP */
-
-/* Private defines -----------------------------------------------------------*/
-
-/* USER CODE BEGIN Private defines */
-
-/* USER CODE END Private defines */
-
-#ifdef __cplusplus
-}
 #endif
-
-#endif /* __MAIN_H */
