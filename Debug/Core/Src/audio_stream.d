@@ -1,5 +1,5 @@
-Core/Src/audio_stream.o: ../Core/Src/audio_stream.c ../Core/Inc/filter.h \
- ../Core/Inc/audio_stream.h ../Core/Inc/app_main.h \
+Core/Src/audio_stream.o: ../Core/Src/audio_stream.c \
+ ../Core/Inc/audio_stream.h ../Core/Inc/filter.h ../Core/Inc/app_main.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal.h \
  ../Core/Inc/stm32f4xx_hal_conf.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_rcc.h \
@@ -41,8 +41,8 @@ Core/Src/audio_stream.o: ../Core/Src/audio_stream.c ../Core/Inc/filter.h \
  ../Middlewares/ST/STM32_USB_Device_Library/Core/Inc/usbd_core.h \
  ../Middlewares/ST/STM32_USB_Device_Library/Core/Inc/usbd_ioreq.h \
  ../Middlewares/ST/STM32_USB_Device_Library/Core/Inc/usbd_ctlreq.h
-../Core/Inc/filter.h:
 ../Core/Inc/audio_stream.h:
+../Core/Inc/filter.h:
 ../Core/Inc/app_main.h:
 ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal.h:
 ../Core/Inc/stm32f4xx_hal_conf.h:

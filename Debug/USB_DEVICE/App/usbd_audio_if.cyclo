@@ -1,9 +1,9 @@
-../USB_DEVICE/App/usbd_audio_if.c:143:15:AUDIO_Init_FS	1
 ../USB_DEVICE/App/usbd_audio_if.c:162:15:AUDIO_DeInit_FS	1
-../USB_DEVICE/App/usbd_audio_if.c:181:15:AUDIO_AudioCmd_FS	6
 ../USB_DEVICE/App/usbd_audio_if.c:219:15:AUDIO_VolumeCtl_FS	1
-../USB_DEVICE/App/usbd_audio_if.c:232:15:AUDIO_MuteCtl_FS	1
-../USB_DEVICE/App/usbd_audio_if.c:245:15:AUDIO_PeriodicTC_FS	4
 ../USB_DEVICE/App/usbd_audio_if.c:283:15:AUDIO_GetState_FS	1
+../USB_DEVICE/App/usbd_audio_if.c:143:15:AUDIO_Init_FS	1
+../USB_DEVICE/App/usbd_audio_if.c:245:15:AUDIO_PeriodicTC_FS	4
+../USB_DEVICE/App/usbd_audio_if.c:181:15:AUDIO_AudioCmd_FS	5
+../USB_DEVICE/App/usbd_audio_if.c:232:15:AUDIO_MuteCtl_FS	1
 ../USB_DEVICE/App/usbd_audio_if.c:294:6:TransferComplete_CallBack_FS	1
 ../USB_DEVICE/App/usbd_audio_if.c:305:6:HalfTransfer_CallBack_FS	1

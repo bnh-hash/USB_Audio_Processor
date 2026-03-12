@@ -1,6 +1,4 @@
-../Core/Src/app_main.c:35:17:Pot_ReadChannel	40	static
-../Core/Src/app_main.c:61:13:Pot_ReadAll	16	static
-../Core/Src/app_main.c:81:14:Pot_Map	24	static
-../Core/Src/app_main.c:100:13:Pot_ApplyToParams	24	static
-../Core/Src/app_main.c:179:6:App_Init	8	static
-../Core/Src/app_main.c:217:6:App_Loop	8	static
+../Core/Src/app_main.c:47:13:Pot_ReadAll	56	static
+../Core/Src/app_main.c:74:13:Pot_ApplyToParams	16	static
+../Core/Src/app_main.c:151:6:App_Init	8	static
+../Core/Src/app_main.c:185:6:App_Loop	8	static

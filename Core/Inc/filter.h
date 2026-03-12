@@ -39,11 +39,6 @@ typedef struct {
     uint8_t wah_enable;         // 1: Aktif, 0: Pasif
     float wah_sensitivity;      // Giris sesine tepki hassasiyeti (0.0 - 1.0)
     float wah_mix;              // Karisim orani (0.0 Dry - 1.0 Wet)
-
-    // 5. Bitcrusher
-	uint8_t bitcrush_enable;    // 1: Aktif
-	float bitcrush_amount;      // 0.0 (Temiz) - 1.0 (Tamamen Yikim)
-
 	// 6. Delay (YENI - Yanki)
 	uint8_t delay_enable;
 	float delay_feedback; // 0.0 - 0.9 (Yankinin ne kadar surecegi)

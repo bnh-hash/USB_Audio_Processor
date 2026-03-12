@@ -1,12 +1,3 @@
-../Core/Src/filter.c:83:14:Calculate_LPF_Alpha	3
-../Core/Src/filter.c:97:14:Calculate_HPF_Alpha	3
-../Core/Src/filter.c:109:6:Filter_Init	3
-../Core/Src/filter.c:154:6:Filter_Set_Params	3
-../Core/Src/filter.c:175:13:Apply_RingModulator	3
-../Core/Src/filter.c:193:13:Apply_LPF	2
-../Core/Src/filter.c:210:13:Apply_HPF	2
-../Core/Src/filter.c:237:13:Apply_AutoWah	8
-../Core/Src/filter.c:298:13:Apply_Bitcrusher	3
-../Core/Src/filter.c:333:13:Apply_Delay	4
-../Core/Src/filter.c:360:13:Apply_MasterVolume_And_Clip	5
-../Core/Src/filter.c:375:6:Filter_Apply	2
+../Core/Src/filter.c:116:6:Filter_Set_Params	7
+../Core/Src/filter.c:82:6:Filter_Init	2
+../Core/Src/filter.c:274:6:Filter_Apply	21
