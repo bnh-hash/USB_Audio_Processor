@@ -85,7 +85,7 @@ static void Pot_ApplyToParams(void)
 
     app_filter_params.lpf_cutoff_freq = ((float)pot_values[1] / 4095.0f) * 10000.0f;
 
-    /* ── POT2 (idx 1) → LPF Cutoff (LOGARİTMİK YAPI deneyebiliriz) ── */
+    /* ── POT2 (idx 1) → LPF Cutoff (LOGARİTMİK YAPI ) ── */
       /*  if (pot_values[1] >= 100) {
             app_filter_params.lpf_enable = 1;
 
@@ -111,7 +111,7 @@ static void Pot_ApplyToParams(void)
             float norm = (float)pot_values[2] / 4095.0f;
 
             // Logaritmik geçiş: 20 Hz ile 1500 Hz arası (1500 / 20 = 75 çarpanı)
-            // Böylece bas frekanslarda milim milim, hassas bir kontrolünüz olur.
+            // Böylece bas frekanslarda  hassas bir kontrol olur.
             app_filter_params.hpf_cutoff_freq = 20.0f * powf(100.0f, norm);
         }
         /* POT4 → Delay Feedback */
@@ -165,7 +165,7 @@ void App_Init(void)
     app_filter_params.wah_sensitivity    = 0.5f;
     app_filter_params.delay_feedback     = 0.0f;
 
-    app_filter_params.ring_mod_intensity = 0.7f;
+    app_filter_params.ring_mod_intensity = 0.8f;
     app_filter_params.wah_mix            = 0.8f;
     app_filter_params.delay_mix          = 0.8f;
 

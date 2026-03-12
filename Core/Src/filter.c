@@ -16,13 +16,13 @@
 // Denormal sayıları (FPU kilitlenmesini) önlemek için duyulmaz DC offset
 #define ANTI_DENORMAL   1e-18f
 
-// --- WAH AYARLARI ---
+/* --- WAH AYARLARI ---
 #define WAH_MIN_FREQ    500.0f
 #define WAH_MAX_FREQ    2500.0f
 #define WAH_Q_FACTOR    0.7f     // 0.7 = stabil + güzel wah sesi
 #define WAH_ATTACK      0.015f
 #define WAH_RELEASE     0.004f
-#define WAH_MAKEUP_GAIN 3.0f
+#define WAH_MAKEUP_GAIN 3.0f*/
 
 // --- DELAY AYARLARI ---
 #define DELAY_BUFFER_SIZE 16384  // 48 kHz'de ≈ 341 ms gecikme
