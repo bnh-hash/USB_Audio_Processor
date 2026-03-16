@@ -1,292 +1,204 @@
-/*
- * filter.c
- *
- * Created on: Mar 2, 2026
- * Author: Gökçe
- *
- * DSP Efekt Zinciri:
- * RingMod → LPF (2. derece) → HPF (2. derece) → AutoWah (değişecek)→  → Delay → Volume
- */
 #include "filter.h"
 #include <math.h>
+#include <stdlib.h>
 
-/* ══════════════════════════════════════════════
-   SABITLER & KORUMALAR
-   ══════════════════════════════════════════════ */
-// Denormal sayıları (FPU kilitlenmesini) önlemek için duyulmaz DC offset
-#define ANTI_DENORMAL   1e-18f
+#define ANTI_DENORMAL 1e-18f
 
-/* --- WAH AYARLARI ---
-#define WAH_MIN_FREQ    500.0f
-#define WAH_MAX_FREQ    2500.0f
-#define WAH_Q_FACTOR    0.7f     // 0.7 = stabil + güzel wah sesi
-#define WAH_ATTACK      0.015f
-#define WAH_RELEASE     0.004f
-#define WAH_MAKEUP_GAIN 3.0f*/
-
-// --- DELAY AYARLARI ---
-#define DELAY_BUFFER_SIZE 16384  // 48 kHz'de ≈ 341 ms gecikme
-
-/* ══════════════════════════════════════════════
-   DAHİLİ DURUM DEĞİŞKENLERİ
-   ══════════════════════════════════════════════ */
+// Orijinal parametre taşıyıcısı
 static filter_params_t current_params;
 
-// --- Ring Modulator ---
-static float carrier_phase     = 0.0f;
-static float carrier_increment = 0.0f;
+/* ════════════ EFEKT DURUM (STATE) DEĞİŞKENLERİ ════════════ */
 
-// --- LPF (2. derece — kaskat) ---
-static float lpf_prev_out_L  = 0.0f, lpf_prev_out_R  = 0.0f;
-static float lpf_prev_out2_L = 0.0f, lpf_prev_out2_R = 0.0f;
-static float lpf_alpha = 1.0f;
+static float ring_mod_phase = 0.0f;
+static float smooth_lpf_freq = 10000.0f;
+static float smooth_hpf_freq = 20.0f;
 
-// --- HPF (2. derece — kaskat) ---
-static float hpf_prev_in_L   = 0.0f, hpf_prev_in_R   = 0.0f;
-static float hpf_prev_out_L  = 0.0f, hpf_prev_out_R  = 0.0f;
-static float hpf_prev_in2_L  = 0.0f, hpf_prev_in2_R  = 0.0f;
-static float hpf_prev_out2_L = 0.0f, hpf_prev_out2_R = 0.0f;
-static float hpf_alpha = 0.0f;
+static float lpf_low_L = 0.0f, lpf_band_L = 0.0f;
+static float lpf_low_R = 0.0f, lpf_band_R = 0.0f;
 
-// --- Auto-Wah ---
-static float env_level_L = 0.0f, env_level_R = 0.0f;
-static float svf_low_L   = 0.0f, svf_band_L  = 0.0f;
-static float svf_low_R   = 0.0f, svf_band_R  = 0.0f;
+static float hpf_low_L = 0.0f, hpf_band_L = 0.0f;
+static float hpf_low_R = 0.0f, hpf_band_R = 0.0f;
 
-// --- Delay ---
-static int16_t  delay_line[DELAY_BUFFER_SIZE];
+static int16_t delay_line[DELAY_BUFFER_SIZE];
 static uint32_t delay_head = 0;
+static float smooth_delay_samples = 1000.0f;
+static float tape_lpf = 0.0f;
 
-/* ══════════════════════════════════════════════
-   YARDIMCI MATEMATİK
-   ══════════════════════════════════════════════ */
-static float Calculate_LPF_Alpha(float cutoff_freq) {
-    if (cutoff_freq >= (SAMPLE_RATE / 2.0f)) return 1.0f;
-    if (cutoff_freq <= 20.0f) return 0.0f;
-    float dt = 1.0f / SAMPLE_RATE;
-    float rc = 1.0f / (2.0f * PI * cutoff_freq);
-    return dt / (rc + dt);
-}
+static float p_apf1_L = 0.0f, p_apf2_L = 0.0f, p_apf3_L = 0.0f, p_apf4_L = 0.0f;
+static float p_apf1_R = 0.0f, p_apf2_R = 0.0f, p_apf3_R = 0.0f, p_apf4_R = 0.0f;
+static float p_lfo = 0.0f;
 
-static float Calculate_HPF_Alpha(float cutoff_freq) {
-    if (cutoff_freq >= (SAMPLE_RATE / 2.0f)) return 0.0f;
-    if (cutoff_freq <= 20.0f) return 1.0f;
-    float dt = 1.0f / SAMPLE_RATE;
-    float rc = 1.0f / (2.0f * PI * cutoff_freq);
-    return rc / (rc + dt);
-}
+/* ════════════ BAŞLATMA VE PARAMETRE GÜNCELLEME ════════════ */
 
-/* ══════════════════════════════════════════════
-   INIT & SET PARAMS
-   ══════════════════════════════════════════════ */
-void Filter_Init(filter_params_t *initial_params) {
-    if (initial_params != NULL) {
-        current_params = *initial_params;
-    } else {
-        current_params.master_volume      = 1.0f;
-        current_params.ring_mod_enable    = 0;
-        current_params.lpf_enable         = 0;
-        current_params.hpf_enable         = 0;
-        current_params.wah_enable         = 0;
-        current_params.delay_enable       = 0;
-        current_params.lpf_cutoff_freq    = 20000.0f;
-        current_params.hpf_cutoff_freq    = 20.0f;
+void Filter_Init(filter_params_t *init_params) {
+    if (init_params != NULL) {
+        current_params = *init_params;
     }
 
-    carrier_phase = 0.0f;
-
-    lpf_prev_out_L = 0.0f;  lpf_prev_out_R = 0.0f;
-    lpf_prev_out2_L = 0.0f; lpf_prev_out2_R = 0.0f;
-
-    hpf_prev_in_L = 0.0f;   hpf_prev_in_R = 0.0f;
-    hpf_prev_out_L = 0.0f;  hpf_prev_out_R = 0.0f;
-    hpf_prev_in2_L = 0.0f;  hpf_prev_in2_R = 0.0f;
-    hpf_prev_out2_L = 0.0f; hpf_prev_out2_R = 0.0f;
-
-    env_level_L = 0.0f; env_level_R = 0.0f;
-    svf_low_L = 0.0f;   svf_band_L = 0.0f;
-    svf_low_R = 0.0f;   svf_band_R = 0.0f;
+    ring_mod_phase = 0.0f;
+    lpf_low_L = 0.0f; lpf_band_L = 0.0f; lpf_low_R = 0.0f; lpf_band_R = 0.0f;
+    hpf_low_L = 0.0f; hpf_band_L = 0.0f; hpf_low_R = 0.0f; hpf_band_R = 0.0f;
 
     for (int i = 0; i < DELAY_BUFFER_SIZE; i++) delay_line[i] = 0;
     delay_head = 0;
+    smooth_delay_samples = 1000.0f;
+    tape_lpf = 0.0f;
 
-    Filter_Set_Params(&current_params);
+    p_apf1_L = 0.0f; p_apf2_L = 0.0f; p_apf3_L = 0.0f; p_apf4_L = 0.0f;
+    p_apf1_R = 0.0f; p_apf2_R = 0.0f; p_apf3_R = 0.0f; p_apf4_R = 0.0f;
+    p_lfo = 0.0f;
 }
 
 void Filter_Set_Params(filter_params_t *new_params) {
-    current_params = *new_params;
-
-    carrier_increment = (2.0f * PI * current_params.ring_mod_freq) / SAMPLE_RATE;
-
-    lpf_alpha = current_params.lpf_enable ? Calculate_LPF_Alpha(current_params.lpf_cutoff_freq) : 1.0f;
-    hpf_alpha = current_params.hpf_enable ? Calculate_HPF_Alpha(current_params.hpf_cutoff_freq) : 1.0f;
+    if (new_params != NULL) {
+        current_params = *new_params;
+    }
 }
 
-/* ══════════════════════════════════════════════
-   EFEKT FONKSİYONLARI
-   ══════════════════════════════════════════════ */
+/* ════════════ EFEKT İŞLEME YARDIMCI FONKSİYONLARI ════════════ */
 
-static void Apply_RingModulator(float *sample_L, float *sample_R) {
+/*static void Apply_RingMod(float *sample_L, float *sample_R) {
+    if (!current_params.ring_mod_enable) return;
+    // Carrier Osilatörü (Zamanı ilerlet)
+    float phase_inc = (2.0f * PI * current_params.ring_mod_freq) / SAMPLE_RATE;
+    ring_mod_phase += phase_inc;
+    if (ring_mod_phase > 2.0f * PI) ring_mod_phase -= 2.0f * PI;
+    // Eski Kulak Tırmalayan Ring Mod: sinf(ring_mod_phase)
+    // YENİ Müzikal Tremolo / Stutter: (sinf + 1) * 0.5
+    // (Sesi eksi faza düşürüp bozmak yerine, sadece %0 ile %100 volüm arası sallar)
+    float carrier = (sinf(ring_mod_phase) + 1.0f) * 0.5f;
+
+    float wet_L = *sample_L * carrier;
+    float wet_R = *sample_R * carrier;
+    float mix = current_params.ring_mod_intensity;
+    // Kuru ses ile modülasyonlu sesi birleştir
+    *sample_L = (*sample_L * (1.0f - mix)) + (wet_L * mix);
+    *sample_R = (*sample_R * (1.0f - mix)) + (wet_R * mix);
+}*/
+
+static void Apply_RingMod(float *sample_L, float *sample_R) {
     if (!current_params.ring_mod_enable) return;
 
-    float carrier = sinf(carrier_phase);
-    carrier_phase += carrier_increment;
-    if (carrier_phase >= 2.0f * PI) carrier_phase -= 2.0f * PI;
+    float phase_inc = (2.0f * PI * current_params.ring_mod_freq) / SAMPLE_RATE;
+    ring_mod_phase += phase_inc;
+    if (ring_mod_phase > 2.0f * PI) ring_mod_phase -= 2.0f * PI;
 
-    float mix = current_params.ring_mod_intensity;
-    *sample_L = (*sample_L) * (1.0f - mix) + (*sample_L) * carrier * mix;
-    *sample_R = (*sample_R) * (1.0f - mix) + (*sample_R) * carrier * mix;
+    float carrier = sinf(ring_mod_phase);
+    float wet_L = *sample_L * carrier;
+    float wet_R = *sample_R * carrier;
+
+    *sample_L = (*sample_L * (1.0f - current_params.ring_mod_intensity)) + (wet_L * current_params.ring_mod_intensity);
+    *sample_R = (*sample_R * (1.0f - current_params.ring_mod_intensity)) + (wet_R * current_params.ring_mod_intensity);
 }
 
 static void Apply_LPF(float *sample_L, float *sample_R) {
     if (!current_params.lpf_enable) return;
 
-    // Kademe 1 (+ Anti-Denormal Koruması)
-    *sample_L = lpf_prev_out_L + lpf_alpha * ((*sample_L) - lpf_prev_out_L) + ANTI_DENORMAL;
-    *sample_R = lpf_prev_out_R + lpf_alpha * ((*sample_R) - lpf_prev_out_R) + ANTI_DENORMAL;
-    lpf_prev_out_L = *sample_L;
-    lpf_prev_out_R = *sample_R;
+    smooth_lpf_freq += 0.005f * (current_params.lpf_cutoff_freq - smooth_lpf_freq);
+    if (smooth_lpf_freq > 12000.0f) smooth_lpf_freq = 12000.0f;
 
-    // Kademe 2
-    *sample_L = lpf_prev_out2_L + lpf_alpha * ((*sample_L) - lpf_prev_out2_L) - ANTI_DENORMAL;
-    *sample_R = lpf_prev_out2_R + lpf_alpha * ((*sample_R) - lpf_prev_out2_R) - ANTI_DENORMAL;
-    lpf_prev_out2_L = *sample_L;
-    lpf_prev_out2_R = *sample_R;
+    float f = 2.0f * sinf(PI * smooth_lpf_freq / SAMPLE_RATE);
+    float q = 0.5f;
+
+    lpf_low_L += f * lpf_band_L + ANTI_DENORMAL;
+    lpf_band_L += f * (*sample_L - lpf_low_L - q * lpf_band_L);
+    *sample_L = lpf_low_L - ANTI_DENORMAL;
+
+    lpf_low_R += f * lpf_band_R + ANTI_DENORMAL;
+    lpf_band_R += f * (*sample_R - lpf_low_R - q * lpf_band_R);
+    *sample_R = lpf_low_R - ANTI_DENORMAL;
 }
 
-/*static void Apply_HPF(float *sample_L, float *sample_R) {
-    if (!current_params.hpf_enable) return;
-
-    float in_L = *sample_L;
-    float in_R = *sample_R;
-
-    // Kademe 1 (+ Anti-Denormal Koruması)
-    float out_L = hpf_alpha * (hpf_prev_out_L + in_L - hpf_prev_in_L) + ANTI_DENORMAL;
-    float out_R = hpf_alpha * (hpf_prev_out_R + in_R - hpf_prev_in_R) + ANTI_DENORMAL;
-    hpf_prev_in_L  = in_L;
-    hpf_prev_in_R  = in_R;
-    hpf_prev_out_L = out_L;
-    hpf_prev_out_R = out_R;
-
-    // Kademe 2
-    float out2_L = hpf_alpha * (hpf_prev_out2_L + out_L - hpf_prev_in2_L) - ANTI_DENORMAL;
-    float out2_R = hpf_alpha * (hpf_prev_out2_R + out_R - hpf_prev_in2_R) - ANTI_DENORMAL;
-    hpf_prev_in2_L  = out_L;
-    hpf_prev_in2_R  = out_R;
-    hpf_prev_out2_L = out2_L;
-    hpf_prev_out2_R = out2_R;
-
-    *sample_L = out2_L;
-    *sample_R = out2_R;
-}*/
 static void Apply_HPF(float *sample_L, float *sample_R) {
     if (!current_params.hpf_enable) return;
-    float in_L = *sample_L;
-    float in_R = *sample_R;
-    // ── 1. KADEME ────────────────────────────────────────────
-    float out_L = hpf_alpha * (hpf_prev_out_L + in_L - hpf_prev_in_L) + ANTI_DENORMAL;
-    float out_R = hpf_alpha * (hpf_prev_out_R + in_R - hpf_prev_in_R) + ANTI_DENORMAL;
-    out_L -= ANTI_DENORMAL;
-    out_R -= ANTI_DENORMAL;
-    hpf_prev_in_L  = in_L;
-    hpf_prev_in_R  = in_R;
-    hpf_prev_out_L = out_L;
-    hpf_prev_out_R = out_R;
-    // ── 2. KADEME ────────────────────────────────────────────
-    float out2_L = hpf_alpha * (hpf_prev_out2_L + out_L - hpf_prev_in2_L) - ANTI_DENORMAL;
-    float out2_R = hpf_alpha * (hpf_prev_out2_R + out_R - hpf_prev_in2_R) - ANTI_DENORMAL;
-    hpf_prev_in2_L  = out_L;
-    hpf_prev_in2_R  = out_R;
-    hpf_prev_out2_L = out2_L;
-    hpf_prev_out2_R = out2_R;
-    *sample_L = out2_L;
-    *sample_R = out2_R;
+
+    smooth_hpf_freq += 0.005f * (current_params.hpf_cutoff_freq - smooth_hpf_freq);
+    float f = 2.0f * sinf(PI * smooth_hpf_freq / SAMPLE_RATE);
+    float q = 0.5f;
+
+    hpf_low_L += f * hpf_band_L + ANTI_DENORMAL;
+    float high_L = *sample_L - hpf_low_L - q * hpf_band_L;
+    hpf_band_L += f * high_L;
+    *sample_L = high_L - ANTI_DENORMAL;
+
+    hpf_low_R += f * hpf_band_R + ANTI_DENORMAL;
+    float high_R = *sample_R - hpf_low_R - q * hpf_band_R;
+    hpf_band_R += f * high_R;
+    *sample_R = high_R - ANTI_DENORMAL;
 }
-static void Apply_AutoWah(float *sample_L, float *sample_R) {
+
+static float APF(float input, float *state, float g) {
+    float v = input - g * (*state);
+    float out = g * v + (*state);
+    *state = v;
+    return out;
+}
+
+static void Apply_Phaser(float *sample_L, float *sample_R) {
     if (!current_params.wah_enable) return;
 
-    float clean_L = *sample_L;
-    float clean_R = *sample_R;
+    float rate = current_params.wah_sensitivity * 3.0f;
+    p_lfo += (rate * 2.0f * PI) / SAMPLE_RATE;
+    if (p_lfo > 2.0f * PI) p_lfo -= 2.0f * PI;
 
-    float input_abs_L = fabsf(*sample_L);
-    float input_abs_R = fabsf(*sample_R);
+    float lfo_val = (sinf(p_lfo) + 1.0f) * 0.5f;
+    float sweep_freq = 300.0f + lfo_val * 2500.0f;
+    float rc = 1.0f / (2.0f * PI * sweep_freq);
+    float dt = 1.0f / SAMPLE_RATE;
+    float alpha = (dt - rc) / (dt + rc);
 
-    // Envelope Follower (+ Anti-Denormal)
-    env_level_L += (input_abs_L > env_level_L ? WAH_ATTACK : WAH_RELEASE) * (input_abs_L - env_level_L) + ANTI_DENORMAL;
-    env_level_R += (input_abs_R > env_level_R ? WAH_ATTACK : WAH_RELEASE) * (input_abs_R - env_level_R) + ANTI_DENORMAL;
-
-    float mod_L = fminf(fmaxf((env_level_L / 16000.0f) * current_params.wah_sensitivity, 0.0f), 1.0f);
-    float mod_R = fminf(fmaxf((env_level_R / 16000.0f) * current_params.wah_sensitivity, 0.0f), 1.0f);
-
-    float current_cutoff_L = WAH_MIN_FREQ + (WAH_MAX_FREQ - WAH_MIN_FREQ) * mod_L;
-    float current_cutoff_R = WAH_MIN_FREQ + (WAH_MAX_FREQ - WAH_MIN_FREQ) * mod_R;
-
-    float f_L = 2.0f * sinf(PI * current_cutoff_L / SAMPLE_RATE);
-    float f_R = 2.0f * sinf(PI * current_cutoff_R / SAMPLE_RATE);
-
-    // SVF Sol Kanal
-    svf_low_L += f_L * svf_band_L;
-    float high_L = (*sample_L) - svf_low_L - (WAH_Q_FACTOR * svf_band_L);
-    svf_band_L += f_L * high_L;
-
-    // SVF Sağ Kanal
-    svf_low_R += f_R * svf_band_R;
-    float high_R = (*sample_R) - svf_low_R - (WAH_Q_FACTOR * svf_band_R);
-    svf_band_R += f_R * high_R;
-
-    *sample_L = (clean_L * (1.0f - current_params.wah_mix)) + (svf_band_L * WAH_MAKEUP_GAIN * current_params.wah_mix);
-    *sample_R = (clean_R * (1.0f - current_params.wah_mix)) + (svf_band_R * WAH_MAKEUP_GAIN * current_params.wah_mix);
+    *sample_L = (APF(APF(APF(APF(*sample_L, &p_apf1_L, alpha), &p_apf2_L, alpha), &p_apf3_L, alpha), &p_apf4_L, alpha) * 0.5f) + (*sample_L * 0.5f);
+    *sample_R = (APF(APF(APF(APF(*sample_R, &p_apf1_R, alpha), &p_apf2_R, alpha), &p_apf3_R, alpha), &p_apf4_R, alpha) * 0.5f) + (*sample_R * 0.5f);
 }
-
 
 static void Apply_Delay(float *sample_L, float *sample_R) {
     if (!current_params.delay_enable) return;
-    // --- ZAMAN (TIME) AYARI ---
-    uint32_t delay_time_samples = DELAY_BUFFER_SIZE / 3;
-    int32_t read_idx = delay_head - delay_time_samples;
-    if (read_idx < 0) read_idx += DELAY_BUFFER_SIZE;
-    // --------------------------
-    float delayed_sample = (float)delay_line[read_idx];
-    // --- TAPE ECHO LPF ---
-    static float tape_lpf = 0.0f;
+
+    float target_delay = current_params.delay_time * (DELAY_BUFFER_SIZE - 1);
+    if (target_delay < 10.0f) target_delay = 10.0f;
+
+    smooth_delay_samples += 0.001f * (target_delay - smooth_delay_samples);
+    int32_t read_idx = (int32_t)delay_head - (int32_t)smooth_delay_samples;
+    while (read_idx < 0) read_idx += DELAY_BUFFER_SIZE;
+
+    float delayed_sample = (float)delay_line[read_idx % DELAY_BUFFER_SIZE];
     tape_lpf += 0.75f * (delayed_sample - tape_lpf);
     delayed_sample = tape_lpf;
+
     float input_mono = (*sample_L + *sample_R) * 0.5f;
     float write_val = input_mono + (delayed_sample * current_params.delay_feedback);
-    // --- KIRPMA (SOFT CLIPPING)   ---
     write_val = fminf(fmaxf(write_val, -32000.0f), 32000.0f);
+
     delay_line[delay_head] = (int16_t)write_val;
     delay_head = (delay_head + 1) % DELAY_BUFFER_SIZE;
+
     *sample_L += delayed_sample * current_params.delay_mix;
     *sample_R += delayed_sample * current_params.delay_mix;
 }
+
 static void Apply_MasterVolume_And_Clip(float *sample_L, float *sample_R) {
     *sample_L *= current_params.master_volume;
     *sample_R *= current_params.master_volume;
-
     *sample_L = fminf(fmaxf(*sample_L, -32768.0f), 32767.0f);
     *sample_R = fminf(fmaxf(*sample_R, -32768.0f), 32767.0f);
 }
 
-/* ══════════════════════════════════════════════
-   ANA İŞLEME FONKSİYONU
-   ══════════════════════════════════════════════ */
-void Filter_Apply(int16_t *buffer, uint32_t num_samples) {
-    float sample_L, sample_R;
+/* ════════════ ANA İŞLEME FONKSİYONU ════════════ */
 
-    for (uint32_t i = 0; i < num_samples; i += 2) {
-        sample_L = (float)buffer[i];
-        sample_R = (float)buffer[i + 1];
+// BU FONKSİYON İSMİ audio_stream.c İLE AYNI OLMALIDIR
+void Filter_Apply(int16_t *audio_in, int16_t *audio_out, uint16_t samples_per_channel) {
+    for (uint16_t i = 0; i < samples_per_channel; i++) {
+        float sample_L = (float)audio_in[i * 2];
+        float sample_R = (float)audio_in[i * 2 + 1];
 
-        Apply_RingModulator(&sample_L, &sample_R);
+        Apply_RingMod(&sample_L, &sample_R);
         Apply_LPF(&sample_L, &sample_R);
         Apply_HPF(&sample_L, &sample_R);
-        Apply_AutoWah(&sample_L, &sample_R);
+        Apply_Phaser(&sample_L, &sample_R);
         Apply_Delay(&sample_L, &sample_R);
-
         Apply_MasterVolume_And_Clip(&sample_L, &sample_R);
 
-        buffer[i]     = (int16_t)sample_L;
-        buffer[i + 1] = (int16_t)sample_R;
+        audio_out[i * 2]     = (int16_t)sample_L;
+        audio_out[i * 2 + 1] = (int16_t)sample_R;
     }
 }

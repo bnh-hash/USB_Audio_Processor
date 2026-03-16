@@ -15,7 +15,6 @@
 extern USBD_HandleTypeDef hUsbDeviceFS;
 
 // !!! DİKKAT: CubeMX ayarınıza göre burası hi2s2 veya hi2s3 olabilir.
-// Harici bağlantı için genelde I2S2 kullanılır.
 extern I2S_HandleTypeDef hi2s2;
 
 static uint8_t Ring_Buffer[RING_BUFFER_SIZE];
@@ -62,7 +61,6 @@ void AudioStream_Write_USB_Packet(uint8_t* pbuf, uint32_t len) {
         ring_write_ptr = (ring_write_ptr + 1) % RING_BUFFER_SIZE;
     }
 
-    // Mevcut bayt sayısını artır (Kesme korumaları kaldırıldı)
     ring_available_bytes += len;
 }
 
@@ -77,19 +75,16 @@ static void Process_Audio_Chunk(int16_t* pOutputBuffer, uint32_t n_samples) {
     uint32_t bytes_needed = n_samples * 2; // Her örnek (sample) 2 byte (16-bit)
 
     // --- Drift Correction (Kayma Düzeltmesi) ---
-    // Eğer USB'den çok hızlı veri geliyorsa (PC saatinden dolayı)
     if (ring_available_bytes > (TARGET_LEVEL + DRIFT_THRESHOLD)) {
         ring_read_ptr = (ring_read_ptr + (AUDIO_CHANNELS * BYTES_PER_SAMPLE)) % RING_BUFFER_SIZE;
         ring_available_bytes -= (AUDIO_CHANNELS * BYTES_PER_SAMPLE);
     }
-    // Eğer USB'den veri yavaş geliyorsa (Underrun tehlikesi)
     else if (ring_available_bytes < (TARGET_LEVEL - DRIFT_THRESHOLD)) {
         ring_read_ptr = (ring_read_ptr - (AUDIO_CHANNELS * BYTES_PER_SAMPLE) + RING_BUFFER_SIZE) % RING_BUFFER_SIZE;
         ring_available_bytes += (AUDIO_CHANNELS * BYTES_PER_SAMPLE);
     }
 
     // --- Veri Kopyalama ---
-    // Eğer buffer'da yeterli veri yoksa çıkışı sessize al (sıfırla)
     if (ring_available_bytes < bytes_needed) {
         memset(pOutputBuffer, 0, bytes_needed);
     }
@@ -110,8 +105,10 @@ void AudioStream_Process_Half_Transfer(void) {
 
     // USB Buffer'ından veriyi çek
     Process_Audio_Chunk(pSafeZone, TX_HALF_SAMPLES);
-    // Çekilen veriye DSP filtrelerini uygula
-    Filter_Apply(pSafeZone, TX_HALF_SAMPLES);
+
+    // --- DÜZELTME: Giriş adresi, Çıkış adresi, Kanal başına örnek sayısı ---
+    // Stereo olduğu için TX_HALF_SAMPLES / 2 (96 Sol + 96 Sağ = 192 Toplam)
+    Filter_Apply(pSafeZone, pSafeZone, (uint16_t)(TX_HALF_SAMPLES / 2));
 }
 
 // DMA Buffer'ın İKİNCİ yarısı bittiğinde çalışır (I2S DMA Kesmesi)
@@ -121,22 +118,21 @@ void AudioStream_Process_Full_Transfer(void) {
 
     // USB Buffer'ından veriyi çek
     Process_Audio_Chunk(pSafeZone, TX_HALF_SAMPLES);
-    // Çekilen veriye DSP filtrelerini uygula
-    Filter_Apply(pSafeZone, TX_HALF_SAMPLES);
+
+    // --- DÜZELTME: Giriş adresi, Çıkış adresi, Kanal başına örnek sayısı ---
+    Filter_Apply(pSafeZone, pSafeZone, (uint16_t)(TX_HALF_SAMPLES / 2));
 }
 
 /* ══════════════════════════════════════════════
    HAL CALLBACK'LERİ (DMA Kesme Yakalayıcılar)
    ══════════════════════════════════════════════ */
 
-// I2S (SPI2) Yarım Aktarım Tamamlandı (Half Transfer Complete)
 void HAL_I2S_TxHalfCpltCallback(I2S_HandleTypeDef *hi2s) {
     if(hi2s->Instance == SPI2) {
         AudioStream_Process_Half_Transfer();
     }
 }
 
-// I2S (SPI2) Tam Aktarım Tamamlandı (Transfer Complete)
 void HAL_I2S_TxCpltCallback(I2S_HandleTypeDef *hi2s) {
     if(hi2s->Instance == SPI2) {
         AudioStream_Process_Full_Transfer();

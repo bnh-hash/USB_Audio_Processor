@@ -1,4 +1,3 @@
-../Core/Src/app_main.c:47:13:Pot_ReadAll	4
-../Core/Src/app_main.c:74:13:Pot_ApplyToParams	4
-../Core/Src/app_main.c:151:6:App_Init	1
-../Core/Src/app_main.c:185:6:App_Loop	2
+../Core/Src/app_main.c:32:13:Pot_ReadAll	4
+../Core/Src/app_main.c:123:6:App_Init	1
+../Core/Src/app_main.c:155:6:App_Loop	8
