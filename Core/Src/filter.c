@@ -1,6 +1,7 @@
 #include "filter.h"
 #include <math.h>
 #include <stdlib.h>
+#include "OLED.h"
 
 #define ANTI_DENORMAL 1e-18f
 
@@ -57,24 +58,6 @@ void Filter_Set_Params(filter_params_t *new_params) {
 
 /* ════════════ EFEKT İŞLEME YARDIMCI FONKSİYONLARI ════════════ */
 
-/*static void Apply_RingMod(float *sample_L, float *sample_R) {
-    if (!current_params.ring_mod_enable) return;
-    // Carrier Osilatörü (Zamanı ilerlet)
-    float phase_inc = (2.0f * PI * current_params.ring_mod_freq) / SAMPLE_RATE;
-    ring_mod_phase += phase_inc;
-    if (ring_mod_phase > 2.0f * PI) ring_mod_phase -= 2.0f * PI;
-    // Eski Kulak Tırmalayan Ring Mod: sinf(ring_mod_phase)
-    // YENİ Müzikal Tremolo / Stutter: (sinf + 1) * 0.5
-    // (Sesi eksi faza düşürüp bozmak yerine, sadece %0 ile %100 volüm arası sallar)
-    float carrier = (sinf(ring_mod_phase) + 1.0f) * 0.5f;
-
-    float wet_L = *sample_L * carrier;
-    float wet_R = *sample_R * carrier;
-    float mix = current_params.ring_mod_intensity;
-    // Kuru ses ile modülasyonlu sesi birleştir
-    *sample_L = (*sample_L * (1.0f - mix)) + (wet_L * mix);
-    *sample_R = (*sample_R * (1.0f - mix)) + (wet_R * mix);
-}*/
 
 static void Apply_RingMod(float *sample_L, float *sample_R) {
     if (!current_params.ring_mod_enable) return;
@@ -128,10 +111,10 @@ static void Apply_HPF(float *sample_L, float *sample_R) {
 }
 
 static float APF(float input, float *state, float g) {
-    float v = input - g * (*state);
-    float out = g * v + (*state);
-    *state = v;
-    return out;
+    float v = input - g * (*state) + ANTI_DENORMAL;
+	float out = g * v + (*state) - ANTI_DENORMAL;
+	*state = v;
+	return out;
 }
 
 static void Apply_Phaser(float *sample_L, float *sample_R) {
@@ -184,10 +167,17 @@ static void Apply_MasterVolume_And_Clip(float *sample_L, float *sample_R) {
 }
 
 /* ════════════ ANA İŞLEME FONKSİYONU ════════════ */
-
-// BU FONKSİYON İSMİ audio_stream.c İLE AYNI OLMALIDIR
+/* ════════════ ANA İŞLEME FONKSİYONU ════════════ */
 void Filter_Apply(int16_t *audio_in, int16_t *audio_out, uint16_t samples_per_channel) {
+
+    // --- EKRAN GÜNCELLEME KÖPRÜSÜ (YENİ) ---
+    // Her ses bloğu geldiğinde (genelde 128 veya 256 örnek)
+    // bunun sol kanalını alıp ekrana gönderiyoruz.
+    OLED_UpdateWaveform(audio_in, samples_per_channel);
+
     for (uint16_t i = 0; i < samples_per_channel; i++) {
+        // Mevcut filtreleme işlemleri burada devam ediyor.
+
         float sample_L = (float)audio_in[i * 2];
         float sample_R = (float)audio_in[i * 2 + 1];
 

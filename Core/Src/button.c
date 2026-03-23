@@ -1,4 +1,5 @@
 #include "button.h"
+
 // Buton önceki fiziksel durumu (Pull-Up: Basılıyken RESET)
 static uint8_t last_bypass_state = GPIO_PIN_SET;
 static uint8_t last_mute_state   = GPIO_PIN_SET;
@@ -8,6 +9,7 @@ static uint32_t last_mute_press_time   = 0;
 // DSP durumları (Her ikisi de 0 olarak başlar - ses kesilmez!)
 static uint8_t is_bypassed = 0;
 static uint8_t is_muted    = 0;
+
 void Buton_Init(void) {
     is_bypassed = 0;
     is_muted    = 0;
@@ -17,8 +19,10 @@ void Buton_Init(void) {
     HAL_GPIO_WritePin(LED_RED_PORT,   LED_RED_PIN,   GPIO_PIN_RESET);
     HAL_GPIO_WritePin(LED_GREEN_PORT, LED_GREEN_PIN, GPIO_PIN_RESET);
 }
+
 uint8_t Get_Bypass_State(void) { return is_bypassed; }
 uint8_t Get_Mute_State(void)   { return is_muted; }
+
 void Button_Process(void) {
     uint32_t now = HAL_GetTick();
     // --- BYPASS BUTONU (Düşen kenar: SET -> RESET) ---

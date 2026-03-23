@@ -1,2 +1,4 @@
-Core/Src/filter.o: ../Core/Src/filter.c ../Core/Inc/filter.h
+Core/Src/filter.o: ../Core/Src/filter.c ../Core/Inc/filter.h \
+ ../Core/Inc/OLED.h
 ../Core/Inc/filter.h:
+../Core/Inc/OLED.h:

@@ -4,17 +4,22 @@
 #include "main.h"
 #include <math.h>
 #include "button.h"
-
+#include "ssd1306.h"
+#include "OLED.h"
+#include <stdlib.h>
 extern ADC_HandleTypeDef hadc1;
 
 /* ════════════════════════ GLOBAL DEĞİŞKENLER ════════════════════════ */
 filter_params_t  app_filter_params;
 uint16_t         pot_values[POT_COUNT];
+extern uint16_t display_audio_buffer[128];
 
 static uint16_t  smooth_pot[POT_COUNT];
 static uint8_t   first_read = 1;
 
+
 /* ════════════════════════ POT OKUMA ════════════════════════ */
+
 static uint16_t Pot_ReadChannel(uint32_t channel)
 {
     ADC_ChannelConfTypeDef sConfig = {0};
@@ -49,9 +54,11 @@ static float Pot_Map(uint8_t idx, float min_val, float max_val)
 }
 
 /* ════════════════════════ POT → PARAMETRE ════════════════════════ */
+
 static void Pot_ApplyToParams(void)
 {
     /* ── POT1 (idx 0) → PHASER ──────────────────────────────────── */
+
     if (pot_values[0] < 100) {
         app_filter_params.wah_enable = 0;
     } else {
@@ -60,6 +67,7 @@ static void Pot_ApplyToParams(void)
     }
 
     /* ── POT2 (idx 1) → LPF ─────────────────────────────────────── */
+
     if (pot_values[1] >= 100) {
         app_filter_params.lpf_enable = 1;
     } else {
@@ -68,6 +76,7 @@ static void Pot_ApplyToParams(void)
     app_filter_params.lpf_cutoff_freq = ((float)pot_values[1] / 4095.0f) * 10000.0f;
 
     /* ── POT3 (idx 2) → HPF ─────────────────────────────────────── */
+
     if (pot_values[2] < 100) {
         app_filter_params.hpf_enable = 0;
     } else {
@@ -76,20 +85,32 @@ static void Pot_ApplyToParams(void)
         app_filter_params.hpf_cutoff_freq = 20.0f * powf(100.0f, norm);
     }
 
-    /* ── POT4 (idx 3) → TEK-POT DJ DELAY ───────────────────────── */
-    if (pot_values[3] < 100) {
-        app_filter_params.delay_enable   = 0;
-        app_filter_params.delay_feedback = 0.0f;
-        app_filter_params.delay_mix      = 0.0f;
-    } else {
-        app_filter_params.delay_enable   = 1;
-        float da = (float)pot_values[3] / 4095.0f;
-        app_filter_params.delay_time     = 0.4f;   // Sabit yankı hızı
-        app_filter_params.delay_feedback = da * 0.85f;
-        app_filter_params.delay_mix      = da;
-    }
+    /* ── POT4 (idx 3) → TEK-POT DELAY ───────────────────────── */
 
+    if (pot_values[3] < 100) {
+            // Pot kapalıyken delay tamamen devre dışı
+            app_filter_params.delay_enable   = 0;
+            app_filter_params.delay_feedback = 0.0f;
+            app_filter_params.delay_mix      = 0.0f;
+        } else {
+            app_filter_params.delay_enable   = 1;
+
+            // 0.0 ile 1.0 arası normalize pot değeri
+            float da = (float)pot_values[3] / 4095.0f;
+
+            // Potu açtıkça yankı hızı değişir (0.1 çok hızlı slapback, 1.0 uzun yankı)
+            // 0.1 altına düşmüyoruz ki çok dipte cızırtı yapmasın
+            app_filter_params.delay_time = 0.1f + (da * 0.9f);
+
+            // 2. Yankı Tekrar Sayısı (Feedback)
+            // Çok açarsak sonsuz döngüye girip patlamaması için %85 ile sınırlandırdık
+            app_filter_params.delay_feedback = da * 0.85f;
+
+            // 3. Orijinal ses ile yankılı sesin karışımı (Delay Level)
+            app_filter_params.delay_mix = da * 0.7f;
+        }
     /* ── POT5 (idx 4) → ring mod ────────────────────────── */
+
     if (pot_values[4] < 100) {
         app_filter_params.ring_mod_enable = 0;
     } else {
@@ -99,6 +120,7 @@ static void Pot_ApplyToParams(void)
     }
 
     /* ── POT6 (idx 5) → MASTER VOLUME ──────────────────────────── */
+
     app_filter_params.master_volume = Pot_Map(5, 0.0f, 1.5f);
 
     /* ──────── MUTE & BYPASS ZORLAMASI ─────────────────────────── */
@@ -122,7 +144,7 @@ static void Pot_ApplyToParams(void)
 /* ════════════════════════ APP_INIT ════════════════════════ */
 void App_Init(void)
 {
-    /* Güvenli başlangıç: Tüm efektler KAPALI */
+
     app_filter_params.ring_mod_enable    = 1;
     app_filter_params.hpf_enable         = 1;
     app_filter_params.delay_enable       = 1;
@@ -142,6 +164,7 @@ void App_Init(void)
     /* Filtre motoru ve ses akışını başlat */
     Filter_Init(&app_filter_params);
     AudioStream_Init();
+    ssd1306_Init();
     AudioStream_Start();
     Buton_Init();
 
@@ -149,19 +172,52 @@ void App_Init(void)
     Pot_ReadAll();
     /* NOT: Pot_ApplyToParams() burada çağrılmıyor.
        App_Loop ilk 100ms içinde otomatik çağıracak. */
+    // Ekran ilk açıldığında dalga düz bir çizgi olsun diye
+        // buffer'ı sessizlik seviyesi (2048) ile dolduruyoruz:
+        for(int i = 0; i < 128; i++) {
+            display_audio_buffer[i] = 2048;
+        }
 }
 
 /* ════════════════════════ APP_LOOP ════════════════════════ */
 void App_Loop(void)
 {
-    /* 1. Buton kontrolü (her döngüde) */
     Button_Process();
 
-    /* 2. Potansiyometre okuma + parametre güncelleme (100ms'de bir) */
     static uint32_t last_pot_tick = 0;
+    static uint32_t last_ui_tick = 0;
+
+    // --- 1. SİSTEM VE POT OKUMA (20ms) ---
     if (HAL_GetTick() - last_pot_tick >= 20) {
         last_pot_tick = HAL_GetTick();
         Pot_ReadAll();
         Pot_ApplyToParams();
+    }
+
+    // --- 2. EKRAN GÜNCELLEME (50ms) ---
+    if (HAL_GetTick() - last_ui_tick >= 50) {
+        last_ui_tick = HAL_GetTick();
+
+        ssd1306_Fill(Black);
+
+        UI_DrawHeader("funkyfairy");
+
+        // --- GERÇEK OSİLOSKOP ---
+        // Display_audio_buffer içindeki veriyi çizer.
+        // İçine ses verisi gelmediği sürece ip gibi düz bir çizgi çizecek.
+        UI_DrawOscilloscope();
+
+        // Kutucuk hesaplamaları
+
+        uint8_t p1 = (pot_values[0] * 100) / 4000; if(p1>100) p1=100;
+        uint8_t p2 = (pot_values[1] * 100) / 4000; if(p2>100) p2=100;
+        uint8_t p3 = (pot_values[2] * 100) / 4000; if(p3>100) p3=100;
+        uint8_t p4 = (pot_values[3] * 100) / 4000; if(p4>100) p4=100;
+        uint8_t p5 = (pot_values[4] * 100) / 4000; if(p5>100) p5=100;
+        uint8_t p6 = (pot_values[5] * 100) / 4000; if(p6>100) p6=100;
+
+        UI_DrawPotentiometers(p1, p2, p3, p4, p5, p6);
+
+        ssd1306_UpdateScreen();
     }
 }
