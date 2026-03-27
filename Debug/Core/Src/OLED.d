@@ -35,7 +35,8 @@ Core/Src/OLED.o: ../Core/Src/OLED.c ../Core/Inc/OLED.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_pcd.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_ll_usb.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_pcd_ex.h \
- ../Core/Inc/ssd1306_fonts.h ../Core/Inc/ssd1306.h ../Core/Inc/main.h
+ ../Core/Inc/ssd1306_fonts.h ../Core/Inc/ssd1306.h ../Core/Inc/main.h \
+ ../Core/Inc/pot_management.h
 ../Core/Inc/OLED.h:
 ../Core/Inc/ssd1306.h:
 ../Core/Inc/ssd1306_conf.h:
@@ -77,3 +78,4 @@ Core/Src/OLED.o: ../Core/Src/OLED.c ../Core/Inc/OLED.h \
 ../Core/Inc/ssd1306_fonts.h:
 ../Core/Inc/ssd1306.h:
 ../Core/Inc/main.h:
+../Core/Inc/pot_management.h:

@@ -1,5 +1,5 @@
-../Core/Src/OLED.c:18:6:Draw_Heart	10
-../Core/Src/OLED.c:32:6:UI_DrawHeader	34
-../Core/Src/OLED.c:69:6:UI_DrawOscilloscope	4
-../Core/Src/OLED.c:96:6:UI_DrawPotentiometers	5
-../Core/Src/OLED.c:115:6:OLED_UpdateWaveform	3
+../Core/Src/OLED.c:20:6:Draw_Heart	10
+../Core/Src/OLED.c:34:6:UI_DrawHeader	34
+../Core/Src/OLED.c:71:6:UI_DrawOscilloscope	4
+../Core/Src/OLED.c:98:6:UI_DrawPotentiometers	5
+../Core/Src/OLED.c:117:6:OLED_UpdateWaveform	3

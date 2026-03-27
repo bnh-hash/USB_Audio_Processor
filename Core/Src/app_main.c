@@ -7,11 +7,31 @@
 #include "ssd1306.h"
 #include "OLED.h"
 #include <stdlib.h>
+#include "pot_management.h"
 extern ADC_HandleTypeDef hadc1;
+
+
+
+/* Pin → ADC Kanal eşlemesi
+ *
+ *   POT1 → PB0  → ADC1_IN8  → Phaser
+ *   POT2 → PB1  → ADC1_IN9  → LPF Cutoff
+ *   POT3 → PC5  → ADC1_IN15 → HPF Cutoff
+ *   POT4 → PC4  → ADC1_IN14 → Delay Feedback
+ *   POT5 → PA7  → ADC1_IN7  → Ring Mod Frekans
+ *   POT6 → PA6  → ADC1_IN6  → Master Volume
+ */
+static const uint32_t POT_CHANNELS[POT_COUNT] = {
+    ADC_CHANNEL_8,    // POT1 → PB0  → Phaser
+    ADC_CHANNEL_9,    // POT2 → PB1  → LPF Cutoff
+    ADC_CHANNEL_15,   // POT3 → PC5  → HPF Cutoff
+    ADC_CHANNEL_14,   // POT4 → PC4  → Delay Feedback
+    ADC_CHANNEL_7,    // POT5 → PA7  → Ring Mod Frekans
+    ADC_CHANNEL_6,    // POT6 → PA6  → Master Volume
+};
 
 /* ════════════════════════ GLOBAL DEĞİŞKENLER ════════════════════════ */
 filter_params_t  app_filter_params;
-uint16_t         pot_values[POT_COUNT];
 extern uint16_t display_audio_buffer[128];
 
 static uint16_t  smooth_pot[POT_COUNT];
@@ -36,6 +56,8 @@ static uint16_t Pot_ReadChannel(uint32_t channel)
 
 static void Pot_ReadAll(void)
 {
+	uint16_t * p_values = get_pot_values();
+
     for (uint8_t i = 0; i < POT_COUNT; i++) {
         uint16_t raw = Pot_ReadChannel(POT_CHANNELS[i]);
         if (first_read) {
@@ -43,14 +65,15 @@ static void Pot_ReadAll(void)
         } else {
             smooth_pot[i] = (uint16_t)(((uint32_t)smooth_pot[i] * 7u + (uint32_t)(4096-raw)) / 8u);
         }
-        pot_values[i] = smooth_pot[i];
+        p_values[i] = smooth_pot[i];
     }
     first_read = 0;
 }
 
 static float Pot_Map(uint8_t idx, float min_val, float max_val)
 {
-    return min_val + ((float)pot_values[idx] / 4095.0f) * (max_val - min_val);
+	uint16_t * p_values = get_pot_values();
+	return min_val + ((float)p_values[idx] / 4095.0f) * (max_val - min_val);
 }
 
 /* ════════════════════════ POT → PARAMETRE ════════════════════════ */
@@ -59,35 +82,38 @@ static void Pot_ApplyToParams(void)
 {
     /* ── POT1 (idx 0) → PHASER ──────────────────────────────────── */
 
-    if (pot_values[0] < 100) {
+	uint16_t * p_values = get_pot_values();
+	if (p_values[POT_PHASER] < 100) {
         app_filter_params.wah_enable = 0;
     } else {
         app_filter_params.wah_enable = 1;
-        app_filter_params.wah_sensitivity = (float)pot_values[0] / 4095.0f;
+        app_filter_params.wah_sensitivity = (float)p_values[POT_PHASER] / 4095.0f;
     }
 
     /* ── POT2 (idx 1) → LPF ─────────────────────────────────────── */
 
-    if (pot_values[1] >= 100) {
+    if (p_values[POT_LPF] >= 100) {
         app_filter_params.lpf_enable = 1;
     } else {
         app_filter_params.lpf_enable = 0;
     }
-    app_filter_params.lpf_cutoff_freq = ((float)pot_values[1] / 4095.0f) * 10000.0f;
+    if (p_values[POT_LPF] > 3850) p_values[POT_LPF] = 3850;
+
+    app_filter_params.lpf_cutoff_freq = (1.0f - (float)p_values[POT_LPF] / 4095.0f) * 10000.0f;
 
     /* ── POT3 (idx 2) → HPF ─────────────────────────────────────── */
 
-    if (pot_values[2] < 100) {
+    if (p_values[POT_HPF] < 100) {
         app_filter_params.hpf_enable = 0;
     } else {
         app_filter_params.hpf_enable = 1;
-        float norm = (float)pot_values[2] / 4095.0f;
-        app_filter_params.hpf_cutoff_freq = 20.0f * powf(100.0f, norm);
+        float norm = (float)p_values[POT_HPF] / 4095.0f;
+        app_filter_params.hpf_cutoff_freq = 20.0f * powf(400.0f, norm);
     }
 
     /* ── POT4 (idx 3) → TEK-POT DELAY ───────────────────────── */
 
-    if (pot_values[3] < 100) {
+    if (p_values[POT_DELAY] < 100) {
             // Pot kapalıyken delay tamamen devre dışı
             app_filter_params.delay_enable   = 0;
             app_filter_params.delay_feedback = 0.0f;
@@ -96,7 +122,7 @@ static void Pot_ApplyToParams(void)
             app_filter_params.delay_enable   = 1;
 
             // 0.0 ile 1.0 arası normalize pot değeri
-            float da = (float)pot_values[3] / 4095.0f;
+            float da = (float)p_values[POT_DELAY] / 4095.0f;
 
             // Potu açtıkça yankı hızı değişir (0.1 çok hızlı slapback, 1.0 uzun yankı)
             // 0.1 altına düşmüyoruz ki çok dipte cızırtı yapmasın
@@ -111,11 +137,11 @@ static void Pot_ApplyToParams(void)
         }
     /* ── POT5 (idx 4) → ring mod ────────────────────────── */
 
-    if (pot_values[4] < 100) {
+    if (p_values[POT_RING] < 100) {
         app_filter_params.ring_mod_enable = 0;
     } else {
         app_filter_params.ring_mod_enable = 1;
-        float norm = (float)pot_values[4] / 4095.0f;
+        float norm = (float)p_values[POT_RING]/ 4095.0f;
         app_filter_params.ring_mod_freq   = 100.0f * powf(8.0f, norm); // 1–100 Hz
     }
 
@@ -182,6 +208,8 @@ void App_Init(void)
 /* ════════════════════════ APP_LOOP ════════════════════════ */
 void App_Loop(void)
 {
+	uint16_t * p_values = get_pot_values();
+
     Button_Process();
 
     static uint32_t last_pot_tick = 0;
@@ -209,12 +237,12 @@ void App_Loop(void)
 
         // Kutucuk hesaplamaları
 
-        uint8_t p1 = (pot_values[0] * 100) / 4000; if(p1>100) p1=100;
-        uint8_t p2 = (pot_values[1] * 100) / 4000; if(p2>100) p2=100;
-        uint8_t p3 = (pot_values[2] * 100) / 4000; if(p3>100) p3=100;
-        uint8_t p4 = (pot_values[3] * 100) / 4000; if(p4>100) p4=100;
-        uint8_t p5 = (pot_values[4] * 100) / 4000; if(p5>100) p5=100;
-        uint8_t p6 = (pot_values[5] * 100) / 4000; if(p6>100) p6=100;
+        uint8_t p1 = (p_values[POT_PHASER] * 100) / 4000; if(p1>100) p1=100;
+        uint8_t p2 = (p_values[POT_LPF] * 100) / 4000; if(p2>100) p2=100;
+        uint8_t p3 = (p_values[POT_HPF] * 100) / 4000; if(p3>100) p3=100;
+        uint8_t p4 = (p_values[POT_DELAY] * 100) / 4000; if(p4>100) p4=100;
+        uint8_t p5 = (p_values[POT_RING] * 100) / 4000; if(p5>100) p5=100;
+        uint8_t p6 = (p_values[POT_VOLUME]* 100) / 4000; if(p6>100) p6=100;
 
         UI_DrawPotentiometers(p1, p2, p3, p4, p5, p6);
 

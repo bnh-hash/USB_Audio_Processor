@@ -8,7 +8,9 @@
 #include "ssd1306.h"
 #include "ssd1306_fonts.h"
 #include "main.h"
+#include "pot_management.h"
 #include <string.h>
+
 
 /* ════════════════════════ GLOBAL DEĞİŞKENLER ════════════════════════ */
 // filter.c'den gelen gerçek ses verilerini burada tutuyoruz
@@ -94,10 +96,10 @@ void UI_DrawOscilloscope(void) {
 /* ════════════════════════ ALT POTANSİYOMETRELER ════════════════════════ */
 
 void UI_DrawPotentiometers(uint8_t pot1, uint8_t pot2, uint8_t pot3, uint8_t pot4, uint8_t pot5, uint8_t pot6) {
-    uint8_t pot_values[6] = {pot1, pot2, pot3, pot4, pot5, pot6};
+    uint8_t pot_values[POT_COUNT] = {pot1, pot2, pot3, pot4, pot5, pot6};
     uint8_t box_width = 12, box_height = 6, start_y = 56, spacing = 20, offset_x = 6;
 
-    for (int i = 0; i < 6; i++) {
+    for (int i = 0; i < POT_COUNT; i++) {
         uint8_t start_x = offset_x + (i * spacing);
         ssd1306_DrawRectangle(start_x, start_y, start_x + box_width, start_y + box_height, White);
         if (pot_values[i] > 100) pot_values[i] = 100;
